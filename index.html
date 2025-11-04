@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>Prime Judge — 4~6桁素数チャレンジ</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: sans-serif; text-align: center; padding-top: 60px; background:#fafafa; color:#222; }
+    #numberDisplay { font-size: 48px; margin: 20px 0; font-weight:700; }
+    button { font-size: 20px; padding: 12px 28px; margin: 12px; border-radius:8px; border:none; cursor:pointer; }
+    #primeBtn { background:#4caf50; color:white; }
+    #notPrimeBtn { background:#f44336; color:white; }
+    #feedback { font-size: 28px; margin-top: 16px; height:36px; }
+    #final { font-size: 26px; margin-top: 28px; }
+  </style>
+</head>
+<body>
+  <h1>Prime Judge</h1>
+  <div id="numberDisplay">---</div>
+  <div>
+    <button id="primeBtn">素数</button>
+    <button id="notPrimeBtn">素数じゃない</button>
+  </div>
+  <div id="feedback"></div>
+  <div id="final"></div>
+
+  <script>
+    // --- 設定 ---
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwYdYsmtTHmorijDrAD0FC5G6Yf6CBAOhZkKGK_6rxIaHLKe6CD0gPeHcW3h6hmqkd4/exec"; // ← デプロイ後のURLに置き換えて！
+    const TOTAL_QUESTIONS = 10;
+    const ANSWER_TIME_MS = 1500; // 回答制限時間 1.5秒
+    const FEEDBACK_MS = 700;     // 回答後の「正解/不正解」表示時間 0.7秒
+    const MIN_DIGITS = 4;
+    const MAX_DIGITS = 6;
+
+    // --- 変数 ---
+    let questions = []; // {number:..., isPrime:true/false}
+    let qIndex = 0;     // 現在の出題インデックス（0-based）
+    let correctCount = 0;
+    let timerId = null;
+    let answered = false;
+
+    // 素数判定
+    function isPrime(n){
+      if (n < 2) return false;
+      const r = Math.floor(Math.sqrt(n));
+      for (let i=2;i<=r;i++){
+        if (n % i === 0) return false;
+      }
+      return true;
+    }
+
+    // 4〜6桁ランダム生成
+    function genRandomByDigits(){
+      const digits = Math.floor(Math.random() * (MAX_DIGITS - MIN_DIGITS + 1)) + MIN_DIGITS;
+      const min = Math.pow(10, digits-1);
+      const max = Math.pow(10, digits) - 1;
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    // 質問リスト作成：4〜6桁のうち 4〜6個を素数にする
+    function createQuestions(){
+      let primes = [];
+      let nonPrimes = [];
+      // まず4個は素数確保
+      while (primes.length < 4){
+        let n = genRandomByDigits();
+        if (isPrime(n) && !primes.includes(n)) primes.push(n);
+      }
+      // ランダムでさらに0〜2個素数を追加（計4〜6個）
+      const extraPrimes = Math.floor(Math.random() * 3); // 0,1,2
+      while (primes.length < 4 + extraPrimes){
+        let n = genRandomByDigits();
+        if (isPrime(n) && !primes.includes(n)) primes.push(n);
+      }
+      // 残りを非素数で埋める
+      while (primes.length + nonPrimes.length < TOTAL_QUESTIONS){
+        let n = genRandomByDigits();
+        if (!isPrime(n) && !nonPrimes.includes(n)) nonPrimes.push(n);
+      }
+      // 結合してシャッフル
+      questions = primes.concat(nonPrimes).map(n => ({ number: n, isPrime: isPrime(n) }));
+      // Fisher-Yates shuffle
+      for (let i = questions.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [questions[i], questions[j]] = [questions[j], questions[i]];
+      }
+    }
+
+    // 表示更新（次の問題を表示）
+    function showNext(){
+      document.getElementById("feedback").textContent = "";
+      document.getElementById("final").textContent = "";
+      if (qIndex >= TOTAL_QUESTIONS){
+        // 終了
+        document.getElementById("numberDisplay").textContent = "---";
+        document.getElementById("final").textContent = `10問中 ${correctCount}問 正解！`;
+        return;
+      }
+      answered = false;
+      const q = questions[qIndex];
+      document.getElementById("numberDisplay").textContent = q.number;
+
+      // 回答制限タイマー（1.5秒）。時間切れは「不正解扱い」として進める（未回答を不正解に含める仕様）
+      timerId = setTimeout(() => {
+        if (!answered){
+          // 未回答 → 不正解扱い
+          sendResultAndAdvance(false, true); // playerAnswer=false, timeout=true
+        }
+      }, ANSWER_TIME_MS);
+    }
+
+    // 送信 & 次へ（answer: プレイヤーの選択 true=素数 / false=素数じゃない）
+    async function sendResultAndAdvance(playerAnswer, timeout=false){
+      if (timerId) { clearTimeout(timerId); timerId = null; }
+      if (answered && !timeout) return; // 既に回答済み（安全措置）
+      answered = true;
+
+      const q = questions[qIndex];
+      const correct = q.isPrime === playerAnswer;
+      if (correct) correctCount++;
+
+      // 表示：正解 / 不正解（0.7秒）
+      document.getElementById("feedback").textContent = correct ? "正解" : "不正解";
+
+      // スプレッドシート用データ
+      const payload = {
+        questionIndex: qIndex + 1,       // 1〜10 の番号
+        number: q.number,
+        isPrime: q.isPrime,             // 問題が素数か（true/false）
+        playerAnswer: playerAnswer,     // プレイヤーが選んだ答え（true/false）
+        resultText: correct ? "Correct" : "Wrong"
+      };
+
+      // 非同期で送信（失敗してもプレイは続ける）
+      try {
+        await fetch(SCRIPT_URL, {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        // console.log("送信成功", payload);
+      } catch (e) {
+        console.warn("送信失敗:", e);
+      }
+
+      // 0.7秒後に次の問題へ
+      setTimeout(() => {
+        qIndex++;
+        showNext();
+      }, FEEDBACK_MS);
+    }
+
+    // ボタン処理
+    document.getElementById("primeBtn").addEventListener("click", () => {
+      if (answered) return;
+      sendResultAndAdvance(true);
+    });
+    document.getElementById("notPrimeBtn").addEventListener("click", () => {
+      if (answered) return;
+      sendResultAndAdvance(false);
+    });
+
+    // 初期化して開始
+    createQuestions();
+    showNext();
+  </script>
+</body>
+</html>
